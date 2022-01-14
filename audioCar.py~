@@ -1,0 +1,127 @@
+import RPi.GPIO as GPIO
+import time
+
+class audioCar:
+    def __init__(self):
+        # function to initialize car
+        # GPIO uses pin number
+        GPIO.setmode(GPIO.BCM)
+
+        # hbridge pin definitions:
+
+        self.hbridge = {"1A":18,"2A":27,"3A":22,"4A":23}
+        self.encoder = {"left":4, "right":17}
+        self.led = {"a":19, "b":20, "c":21}
+        self.td = 0.1
+        self.encoder_time = {"4":0, "17":0}
+        self.time_diff = {"4":0, "17":0}
+        self.rpm = {"4":0, "17":0}
+        self.speed = {"4":0, "17":0} 
+
+        # hbridge GPIO init
+        for pin in self.hbridge:
+            # set as ouptut
+            GPIO.setup(self.hbridge[pin], GPIO.OUT)
+            # set low
+            GPIO.output(self.hbridge[pin], GPIO.LOW)
+
+        self.h1A = GPIO.PWM(self.hbridge["1A"],60)
+        self.h2A = GPIO.PWM(self.hbridge["2A"],60)
+        self.h3A = GPIO.PWM(self.hbridge["3A"],60)
+        self.h4A = GPIO.PWM(self.hbridge["4A"],60)
+
+        self.h1A.start(0)
+        self.h2A.start(0)
+        self.h3A.start(0)
+        self.h4A.start(0)
+
+        self.pwm = {"4":50, "17":50} 
+
+
+        # encoder init
+        for pin in self.encoder:
+            # set as input
+            GPIO.setup(self.encoder[pin], GPIO.IN)
+            GPIO.add_event_detect(self.encoder[pin], GPIO.FALLING, callback=self.encoder_callback,bouncetime=50)
+    
+
+        # led init 
+        for pin in self.led:
+            GPIO.setup(self.led[pin], GPIO.OUT)
+            GPIO.output(self.led[pin], GPIO.HIGH)
+            time.sleep(self.td)
+            GPIO.output(self.led[pin], GPIO.LOW)
+
+
+    def exit(self):
+        # function to exit
+        self.h1A.stop()
+        self.h2A.stop()
+        self.h3A.stop()
+        self.h4A.stop()
+        GPIO.cleanup()
+
+
+    def hbridge_test(self):
+        # test sequence for hbridge
+        for pin in self.hbridge:
+            print(pin)
+            GPIO.output(self.hbridge[pin], GPIO.HIGH)
+            time.sleep(1)
+            GPIO.output(self.hbridge[pin], GPIO.LOW)
+            time.sleep(self.td)
+
+    def encoder_callback(self,enc):
+        self.time_diff[str(enc)]= time.time() - self.encoder_time[str(enc)]
+        self.encoder_time[str(enc)] = time.time()
+        self.rpm[str(enc)] = (60/(self.time_diff[str(enc)]*20))
+
+        if self.rpm[str(enc)] < abs(self.speed[str(enc)]):
+            self.pwm[str(enc)] += pow(abs(self.speed[str(enc)])- self.rpm[str(enc)], 1.25)
+            if self.pwm[str(enc)] > 100:
+                self.pwm[str(enc)] = 100
+        elif self.rpm[str(enc)] > abs(self.speed[str(enc)]):
+            self.pwm[str(enc)] -= pow(self.rpm[str(enc)] - abs(self.speed[str(enc)]), 1.25)
+        
+            # don't stall out
+            if self.pwm[str(enc)] < 20 and abs(self.speed[str(enc)]) != 0:
+                self.pwm[str(enc)] = 20
+            # but still stop
+            elif self.speed[str(enc)] == 0: 
+                self.pwm[str(enc)] = 0
+
+        if enc == 4 and self.speed[str(enc)] > 0:
+            self.h1A.ChangeDutyCycle(int(self.pwm[str(enc)]))
+        elif enc == 4 and self.speed[str(enc)] < 0:
+            self.h2A.ChangeDutyCycle(int(self.pwm[str(enc)]))
+        elif enc == 17 and self.speed[str(enc)] > 0:
+            self.h3A.ChangeDutyCycle(int(self.pwm[str(enc)]))
+        elif enc == 17 and self.speed[str(enc)] < 0:
+            self.h4A.ChangeDutyCycle(int(self.pwm[str(enc)]))
+ 
+ 
+        print("encoder: " + str(enc) + " rpm: " + str(self.rpm[str(enc)]) + ",  " + str(self.pwm[str(enc)]))
+
+    def motor_control(self):
+        self.speed["4"] = -34 
+        self.speed["17"] = -34 
+        self.h1A.ChangeDutyCycle(50)
+        self.h3A.ChangeDutyCycle(50)
+        time.sleep(3)
+
+        self.speed["4"] = 0 
+        self.speed["17"] = 0 
+        time.sleep(1)
+        # maintain speed
+
+
+ac = audioCar()
+ac.motor_control()
+ac.exit()
+
+
+
+
+
+
+
