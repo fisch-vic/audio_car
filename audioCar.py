@@ -1,7 +1,7 @@
 import RPi.GPIO as GPIO
 import time
-import statistics as stat
 import random
+import statistics as stat
 
 class audioCar:
     def __init__(self):
@@ -22,9 +22,9 @@ class audioCar:
 
         self.rpm_log = {"4":[], "17":[]} 
 
-        self.k1 = 1
+        self.k1 = 0
         self.k2 = 1
-        self.k3 = 1
+        self.k3 = 0
 
         
 
@@ -86,9 +86,11 @@ class audioCar:
         self.encoder_time[str(enc)] = time.time()
         self.rpm[str(enc)] = (60/(self.time_diff[str(enc)]*20))
         self.rpm_log[str(enc)].append(self.rpm[str(enc)])
-        diff = (abs(self.speed[str(enc)])- self.rpm[str(enc)])
-        self.pwm[str(enc)] += (pow(diff,2)*self.k1 + diff*self.k2 + self.k3)
 
+
+    def ignore(self):
+        diff = (abs(self.speed[str(enc)])- self.rpm[str(enc)])
+        self.pwm[str(enc)] += diff*self.k2
         if self.pwm[str(enc)] > 100:
             self.pwm[str(enc)] = 100
         # don't stall out
@@ -112,7 +114,7 @@ class audioCar:
             self.h3A.ChangeDutyCycle(0)
  
  
-        #print("encoder: " + str(enc) + " rpm: " + str(self.rpm[str(enc)]) + ",  " + str(self.pwm[str(enc)]))
+        print("encoder: " + str(enc) + " rpm: " + str(self.rpm[str(enc)]) + ",  " + str(self.pwm[str(enc)]))
 
     def feedback_stats(self):
 
@@ -132,15 +134,15 @@ class audioCar:
     def rando_opto(self):
         for i in range(100):
             self.rpm_log = {"4":[], "17":[]} 
-            self.k1 = random.randrange(-100,100) / 500 
-            self.k2 = random.randrange(-500,500) / 500
-            self.k3 = random.randrange(-500,500) / 500 
+            #self.k1 = random.randrange(-500,500) / 500 
+            #self.k2 = 2 * random.random() - 0.2
+            #self.k3 = random.randrange(-500,500) / 500 
             print("k1 = " + str(self.k1) + " k2 = " + str(self.k2) + " k3 = " + str(self.k3))
             self.motor_test()
             self.feedback_stats()
 
 
-            text = ("k1 = " + str(self.k1) + " k2 = " + str(self.k2) + " k3 = " + str(self.k3) + " Left(4)- mean: " + str(self.lmean) + " standard deviation: " + str(self.lstd) + " Right(17)- mean: " + str(self.rmean) + " standard deviation: " + str(self.rstd) + " quality = " + str(round(1/((self.speed["4"]-self.lmean)*self.lstd) * 1/((self.speed["17"]-self.rmean)*self.rstd),4)) + '\n')
+            text = ("k1 = " + str(self.k1) + " k2 = " + str(self.k2) + " k3 = " + str(self.k3) + " Left(4)- mean: " + str(self.lmean) + " standard deviation: " + str(self.lstd) + " Right(17)- mean: " + str(self.rmean) + " standard deviation: " + str(self.rstd) + " quality = " + str(round(1/((self.speed["4"]-self.lmean)*self.lstd) * 1000/((self.speed["17"]-self.rmean)*self.rstd),4)) + '\n')
 
             f = open("rando_opto.txt", "a")
             f.write(text)
@@ -149,36 +151,71 @@ class audioCar:
 
     def motor_test(self):
 
-        for i in range(5):
+        for i in range(10):
 
             self.pwm = {"4":50, "17":50} 
-
-            self.speed["4"] = 45 
-            self.speed["17"] = 45
+            self.speed["4"] = 40 
+            self.speed["17"] = 40
             self.h1A.ChangeDutyCycle(100)
             self.h3A.ChangeDutyCycle(100)
-            time.sleep(3)
+            time.sleep(1)
             
-            self.pwm = {"4":50, "17":50} 
+            self.speed["4"] = 0 
+            self.speed["17"] = 0 
+            time.sleep(1)
 
-            self.speed["4"] = -45 
-            self.speed["17"] = -45
+
+            self.pwm = {"4":50, "17":50} 
+            self.speed["4"] = -40 
+            self.speed["17"] = -40 
             self.h2A.ChangeDutyCycle(100)
             self.h4A.ChangeDutyCycle(100)
-            time.sleep(3)
+            time.sleep(1)
 
             self.speed["4"] = 0 
             self.speed["17"] = 0 
+            time.sleep(1)
 
-        time.sleep(4)
+    def calibrate(self):
+
+        mean4 = []
+        mean17 = []
+        median4 = []
+        median17 = []
+        pwm_log = []
+
+        for pwm in range(99):
+            self.rpm_log = {"4":[], "17":[]} 
+            self.h1A.ChangeDutyCycle(100 - pwm)
+            self.h3A.ChangeDutyCycle(100 - pwm)
+            time.sleep(10)
+            pwm_log.append(100-pwm)
+
+            try: 
+                mean4.append(stat.mean(self.rpm_log["4"]))
+                mean17.append( stat.mean(self.rpm_log["17"]))
+
+                median4.append(stat.median(self.rpm_log["4"]))
+                median17.append(stat.median(self.rpm_log["17"]))
+
+                
+            except:
+                mean4.append(0)
+                mean17.append(0)
+                median4.append(0)
+                median17.append(0)
+
+        f = open("calibration_data.txt", "w")
+        f.write(str(median4) + "\n\n" + str(median17) + "\n\n" + str(pwm_log))
+        f.close()
+        print("calibration data written")
 
 
 
-            # maintain spee4`
 
 
 ac = audioCar()
-ac.rando_opto()
+ac.calibrate()
 ac.exit()
 
 
