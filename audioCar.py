@@ -2,16 +2,18 @@ import RPi.GPIO as GPIO
 import time
 import random
 import statistics as stat
+import os
+import sys
 
 class audioCar:
     def __init__(self):
         # function to initialize car
-        # GPIO uses pin number
+        # GPIO uses BCM number
         GPIO.setmode(GPIO.BCM)
 
         # hbridge pin definitions:
 
-        self.hbridge = {"1A":18,"2A":27,"3A":22,"4A":23}
+        self.hbridge = {"1A":18,"2A":27,"3A":23,"4A":22}
         self.encoder = {"left":4, "right":17}
         self.led = {"a":19, "b":20, "c":21}
         self.td = 0.1
@@ -19,6 +21,12 @@ class audioCar:
         self.time_diff = {"4":0, "17":0}
         self.rpm = {"4":0, "17":0}
         self.speed = {"4":0, "17":0} 
+
+        self.max_pwm = 70
+        self.min_pwm = 30
+
+        self.max_rpm = 49
+        self.min_rpm = 34
 
         self.rpm_log = {"4":[], "17":[]} 
 
@@ -35,10 +43,10 @@ class audioCar:
             # set low
             GPIO.output(self.hbridge[pin], GPIO.LOW)
 
-        self.h1A = GPIO.PWM(self.hbridge["1A"],60)
-        self.h2A = GPIO.PWM(self.hbridge["2A"],60)
-        self.h3A = GPIO.PWM(self.hbridge["3A"],60)
-        self.h4A = GPIO.PWM(self.hbridge["4A"],60)
+        self.h1A = GPIO.PWM(self.hbridge["1A"],120)
+        self.h2A = GPIO.PWM(self.hbridge["2A"],120)
+        self.h3A = GPIO.PWM(self.hbridge["3A"],120)
+        self.h4A = GPIO.PWM(self.hbridge["4A"],120)
 
         self.h1A.start(0)
         self.h2A.start(0)
@@ -51,8 +59,8 @@ class audioCar:
         # encoder init
         for pin in self.encoder:
             # set as input
-            GPIO.setup(self.encoder[pin], GPIO.IN)
-            GPIO.add_event_detect(self.encoder[pin], GPIO.FALLING, callback=self.encoder_callback,bouncetime=50)
+            GPIO.setup(self.encoder[pin], GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
+            GPIO.add_event_detect(self.encoder[pin], GPIO.RISING, callback=self.encoder_callback,bouncetime=10)
     
 
         # led init 
@@ -62,7 +70,31 @@ class audioCar:
             time.sleep(self.td)
             GPIO.output(self.led[pin], GPIO.LOW)
 
+    def wheel(self,rpm_l,rpm_r):
+        if abs(rpm_l) > self.max_rpm or abs(rpm_r) > self.max_rpm:
+            print("request exceeds maximum rpm")
+        elif abs(rpm_l) < self.min_rpm and rpm_l != 0 or abs(rpm_r) < self.min_rpm and rpm_r != 0:
+            print("request is too slow")
+        else:
+            pwm_l = (abs(rpm_l) - 16.566) / 0.53929
+            pwm_r = (abs(rpm_r) - 21.012) / 0.39565 
 
+            if pwm_l < 0: pwm_l = 0
+            if pwm_r < 0: pwm_r = 0
+
+            if rpm_l >= 0:
+                self.h1A.ChangeDutyCycle(pwm_l)
+                self.h2A.ChangeDutyCycle(0)
+            elif rpm_l <= 0:
+                self.h2A.ChangeDutyCycle(pwm_l)
+                self.h1A.ChangeDutyCycle(0)
+            if rpm_r >= 0:
+                self.h3A.ChangeDutyCycle(pwm_r)
+                self.h4A.ChangeDutyCycle(0)
+            elif rpm_r <= 0:
+                self.h4A.ChangeDutyCycle(pwm_r)
+                self.h3A.ChangeDutyCycle(0)
+            
     def exit(self):
         # function to exit
         self.h1A.stop()
@@ -86,35 +118,7 @@ class audioCar:
         self.encoder_time[str(enc)] = time.time()
         self.rpm[str(enc)] = (60/(self.time_diff[str(enc)]*20))
         self.rpm_log[str(enc)].append(self.rpm[str(enc)])
-
-
-    def ignore(self):
-        diff = (abs(self.speed[str(enc)])- self.rpm[str(enc)])
-        self.pwm[str(enc)] += diff*self.k2
-        if self.pwm[str(enc)] > 100:
-            self.pwm[str(enc)] = 100
-        # don't stall out
-        if self.pwm[str(enc)] < 20:
-            self.pwm[str(enc)] = 20
-        # but still stop
-        if self.speed[str(enc)] == 0: 
-            self.pwm[str(enc)] = 0
-
-        if enc == 4 and self.speed[str(enc)] >= 0:
-            self.h1A.ChangeDutyCycle(int(self.pwm[str(enc)]))
-            self.h2A.ChangeDutyCycle(0)
-        elif enc == 4 and self.speed[str(enc)] <= 0:
-            self.h2A.ChangeDutyCycle(int(self.pwm[str(enc)]))
-            self.h1A.ChangeDutyCycle(0)
-        elif enc == 17 and self.speed[str(enc)] >= 0:
-            self.h3A.ChangeDutyCycle(int(self.pwm[str(enc)]))
-            self.h4A.ChangeDutyCycle(0)
-        elif enc == 17 and self.speed[str(enc)] <= 0:
-            self.h4A.ChangeDutyCycle(int(self.pwm[str(enc)]))
-            self.h3A.ChangeDutyCycle(0)
- 
- 
-        print("encoder: " + str(enc) + " rpm: " + str(self.rpm[str(enc)]) + ",  " + str(self.pwm[str(enc)]))
+   #     print("encoder: " + str(enc) + " rpm: " + str(self.rpm[str(enc)]) + ",  " + str(self.pwm[str(enc)]))
 
     def feedback_stats(self):
 
@@ -151,30 +155,19 @@ class audioCar:
 
     def motor_test(self):
 
-        for i in range(10):
+        for i in range(1):
 
-            self.pwm = {"4":50, "17":50} 
-            self.speed["4"] = 40 
-            self.speed["17"] = 40
-            self.h1A.ChangeDutyCycle(100)
-            self.h3A.ChangeDutyCycle(100)
-            time.sleep(1)
-            
-            self.speed["4"] = 0 
-            self.speed["17"] = 0 
-            time.sleep(1)
+            speed = 49 
 
 
-            self.pwm = {"4":50, "17":50} 
-            self.speed["4"] = -40 
-            self.speed["17"] = -40 
-            self.h2A.ChangeDutyCycle(100)
-            self.h4A.ChangeDutyCycle(100)
-            time.sleep(1)
+            self.wheel(speed,0)
 
-            self.speed["4"] = 0 
-            self.speed["17"] = 0 
-            time.sleep(1)
+            time.sleep(2)
+            self.wheel(0, speed)
+            time.sleep(30)
+
+            self.wheel(0,0)
+
 
     def calibrate(self):
 
@@ -204,6 +197,11 @@ class audioCar:
                 mean17.append(0)
                 median4.append(0)
                 median17.append(0)
+
+            self.h1A.ChangeDutyCycle(0)
+            self.h3A.ChangeDutyCycle(0)
+            time.sleep(10)
+
 
         f = open("calibration_data.txt", "w")
         f.write(str(median4) + "\n\n" + str(median17) + "\n\n" + str(pwm_log))
