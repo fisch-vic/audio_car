@@ -71,6 +71,8 @@ class audioCar:
             GPIO.output(self.led[pin], GPIO.LOW)
 
     def wheel(self,rpm_l,rpm_r):
+        # start rolling at a specific rpm
+
         pwm_l = (abs(rpm_l) - 39.984) / 0.84904
         pwm_r = (abs(rpm_r) - 32.57) / 0.93539 
 
@@ -78,7 +80,6 @@ class audioCar:
         if pwm_r < 0: pwm_r = 0
         if pwm_l > 100: pwm_l = 100
         if pwm_r > 100: pwm_r = 100
-
 
         if rpm_l >= 0:
             self.h1A.ChangeDutyCycle(pwm_l)
@@ -101,7 +102,6 @@ class audioCar:
         self.h4A.stop()
         GPIO.cleanup()
 
-
     def hbridge_test(self):
         # test sequence for hbridge
         for pin in self.hbridge:
@@ -112,14 +112,20 @@ class audioCar:
             time.sleep(self.td)
 
     def encoder_callback(self,enc):
+        # encoder call back
+        # calc time differnece between pulces
         self.time_diff[str(enc)]= time.time() - self.encoder_time[str(enc)]
+        # reset time for next calculation
         self.encoder_time[str(enc)] = time.time()
+        # calculate & record rpm 
         self.rpm[str(enc)] = (60/(self.time_diff[str(enc)]*20))
         self.rpm_log[str(enc)].append(self.rpm[str(enc)])
+        # tally revolution
         self.revs[str(enc)] += 1/20
 #        print("encoder: " + str(enc) + " rpm: " + str(self.rpm[str(enc)]) + ",  " + str(self.pwm[str(enc)]) + " " + str(self.revs[str(enc)]))
 
     def feedback_stats(self):
+        # calculate rpm stats
 
         l = self.rpm_log["4"]
         r = self.rpm_log["17"]
@@ -156,12 +162,16 @@ class audioCar:
         # reset distance count
         self.revs["4"] = 0
         self.revs["17"] = 0
+        # initialize modulation variable
         mod = 0
 
+        # start rolling
         self.wheel(speed,speed)
 
+        # try and match rate
         while(self.revs["4"] < target_revs):
             if self.revs["4"] - self.revs["17"] > .001:
+                # if difference in revolution count between tires
                 mod = abs(self.revs["4"] - self.revs["17"])
                 self.wheel(speed,speed + mod * (speed / abs(speed)))
 
@@ -192,7 +202,6 @@ class audioCar:
         # reset distance count
         self.revs["4"] = 0
         self.revs["17"] = 0
- 
         
         if l_speed < r_speed:
             r_speed = r_speed*self.min_rpm/l_speed
@@ -250,7 +259,7 @@ class audioCar:
         median17 = []
         pwm_log = []
 
-        for pwm in range(99):
+        for pwm in range(20):
             self.rpm_log = {"4":[], "17":[]} 
             self.h1A.ChangeDutyCycle(100 - pwm)
             self.h3A.ChangeDutyCycle(100 - pwm)
@@ -260,10 +269,8 @@ class audioCar:
             try: 
                 mean4.append(stat.mean(self.rpm_log["4"]))
                 mean17.append( stat.mean(self.rpm_log["17"]))
-
                 median4.append(stat.median(self.rpm_log["4"]))
                 median17.append(stat.median(self.rpm_log["17"]))
-
                 
             except:
                 mean4.append(0)
@@ -280,9 +287,6 @@ class audioCar:
         f.write(str(median4) + "\n\n" + str(median17) + "\n\n" + str(pwm_log))
         f.close()
         print("calibration data written")
-
-
-
 
 
 ac = audioCar()
