@@ -1,15 +1,19 @@
 import RPi.GPIO as GPIO
 import time
+import random
+import statistics as stat
+import os
+import sys
 
 class audioCar:
     def __init__(self):
         # function to initialize car
-        # GPIO uses pin number
+        # GPIO uses BCM number
         GPIO.setmode(GPIO.BCM)
 
         # hbridge pin definitions:
 
-        self.hbridge = {"1A":18,"2A":27,"3A":22,"4A":23}
+        self.hbridge = {"1A":18,"2A":27,"3A":23,"4A":22}
         self.encoder = {"left":4, "right":17}
         self.led = {"a":19, "b":20, "c":21}
         self.td = 0.1
@@ -18,6 +22,20 @@ class audioCar:
         self.rpm = {"4":0, "17":0}
         self.speed = {"4":0, "17":0} 
 
+        self.revs = {"4":0, "17":0} 
+
+        self.max_pwm = 70
+        self.min_pwm = 30
+
+        self.max_rpm = 150 
+        self.min_rpm = 60 
+
+        self.rpm_log = {"4":[], "17":[]} 
+
+        self.wdia = 2.625
+        self.wcir = 3.14159 * self.wdia
+        
+
         # hbridge GPIO init
         for pin in self.hbridge:
             # set as ouptut
@@ -25,10 +43,10 @@ class audioCar:
             # set low
             GPIO.output(self.hbridge[pin], GPIO.LOW)
 
-        self.h1A = GPIO.PWM(self.hbridge["1A"],60)
-        self.h2A = GPIO.PWM(self.hbridge["2A"],60)
-        self.h3A = GPIO.PWM(self.hbridge["3A"],60)
-        self.h4A = GPIO.PWM(self.hbridge["4A"],60)
+        self.h1A = GPIO.PWM(self.hbridge["1A"],120)
+        self.h2A = GPIO.PWM(self.hbridge["2A"],120)
+        self.h3A = GPIO.PWM(self.hbridge["3A"],120)
+        self.h4A = GPIO.PWM(self.hbridge["4A"],120)
 
         self.h1A.start(0)
         self.h2A.start(0)
@@ -41,8 +59,8 @@ class audioCar:
         # encoder init
         for pin in self.encoder:
             # set as input
-            GPIO.setup(self.encoder[pin], GPIO.IN)
-            GPIO.add_event_detect(self.encoder[pin], GPIO.FALLING, callback=self.encoder_callback,bouncetime=50)
+            GPIO.setup(self.encoder[pin], GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
+            GPIO.add_event_detect(self.encoder[pin], GPIO.RISING, callback=self.encoder_callback,bouncetime=10)
     
 
         # led init 
@@ -52,7 +70,29 @@ class audioCar:
             time.sleep(self.td)
             GPIO.output(self.led[pin], GPIO.LOW)
 
+    def wheel(self,rpm_l,rpm_r):
+        pwm_l = (abs(rpm_l) - 39.984) / 0.84904
+        pwm_r = (abs(rpm_r) - 32.57) / 0.93539 
 
+        if pwm_l < 0: pwm_l = 0
+        if pwm_r < 0: pwm_r = 0
+        if pwm_l > 100: pwm_l = 100
+        if pwm_r > 100: pwm_r = 100
+
+
+        if rpm_l >= 0:
+            self.h1A.ChangeDutyCycle(pwm_l)
+            self.h2A.ChangeDutyCycle(0)
+        elif rpm_l <= 0:
+            self.h2A.ChangeDutyCycle(pwm_l)
+            self.h1A.ChangeDutyCycle(0)
+        if rpm_r >= 0:
+            self.h3A.ChangeDutyCycle(pwm_r)
+            self.h4A.ChangeDutyCycle(0)
+        elif rpm_r <= 0:
+            self.h4A.ChangeDutyCycle(pwm_r)
+            self.h3A.ChangeDutyCycle(0)
+        
     def exit(self):
         # function to exit
         self.h1A.stop()
@@ -75,53 +115,139 @@ class audioCar:
         self.time_diff[str(enc)]= time.time() - self.encoder_time[str(enc)]
         self.encoder_time[str(enc)] = time.time()
         self.rpm[str(enc)] = (60/(self.time_diff[str(enc)]*20))
+        self.rpm_log[str(enc)].append(self.rpm[str(enc)])
+        self.revs[str(enc)] += 1/20
+#        print("encoder: " + str(enc) + " rpm: " + str(self.rpm[str(enc)]) + ",  " + str(self.pwm[str(enc)]) + " " + str(self.revs[str(enc)]))
 
-        if self.rpm[str(enc)] < abs(self.speed[str(enc)]):
-            self.pwm[str(enc)] += pow(abs(self.speed[str(enc)])- self.rpm[str(enc)], 1.25)
-            if self.pwm[str(enc)] > 100:
-                self.pwm[str(enc)] = 100
-        elif self.rpm[str(enc)] > abs(self.speed[str(enc)]):
-            self.pwm[str(enc)] -= pow(self.rpm[str(enc)] - abs(self.speed[str(enc)]), 1.25)
+    def feedback_stats(self):
+
+        l = self.rpm_log["4"]
+        r = self.rpm_log["17"]
+
+        self.lmean = stat.mean(l)
+        self.rmean = stat.mean(r)
+
+        self.lstd = stat.stdev(l)
+        self.rstd = stat.stdev(r)
+
         
-            # don't stall out
-            if self.pwm[str(enc)] < 20 and abs(self.speed[str(enc)]) != 0:
-                self.pwm[str(enc)] = 20
-            # but still stop
-            elif self.speed[str(enc)] == 0: 
-                self.pwm[str(enc)] = 0
+        print("Left(4): mean: " + str(self.lmean) + " standard deviation: " + str(self.lstd))
+        print("Right(17): mean: " + str(self.rmean) + " standard deviation: " + str(self.rstd))
 
-        if enc == 4 and self.speed[str(enc)] > 0:
-            self.h1A.ChangeDutyCycle(int(self.pwm[str(enc)]))
-        elif enc == 4 and self.speed[str(enc)] < 0:
-            self.h2A.ChangeDutyCycle(int(self.pwm[str(enc)]))
-        elif enc == 17 and self.speed[str(enc)] > 0:
-            self.h3A.ChangeDutyCycle(int(self.pwm[str(enc)]))
-        elif enc == 17 and self.speed[str(enc)] < 0:
-            self.h4A.ChangeDutyCycle(int(self.pwm[str(enc)]))
- 
- 
-        print("encoder: " + str(enc) + " rpm: " + str(self.rpm[str(enc)]) + ",  " + str(self.pwm[str(enc)]))
 
-    def motor_control(self):
-        self.speed["4"] = -34 
-        self.speed["17"] = -34 
-        self.h1A.ChangeDutyCycle(50)
-        self.h3A.ChangeDutyCycle(50)
-        time.sleep(3)
+    def motor_test(self):
 
-        self.speed["4"] = 0 
-        self.speed["17"] = 0 
-        time.sleep(1)
-        # maintain speed
+        for i in range(5):
+
+            speed = 120 
+
+
+            self.wheel(speed,speed)
+
+            time.sleep(2)
+            self.wheel(-1 * speed, -1 * speed)
+            time.sleep(2)
+
+            self.wheel(0,0)
+
+    def drive_straight(self,speed,length):
+        # calculate target rev 
+        target_revs = length / self.wcir
+        # reset distance count
+        self.revs["4"] = 0
+        self.revs["17"] = 0
+        mod = 0
+
+        self.wheel(speed,speed)
+
+        while(self.revs["4"] < target_revs):
+            if self.revs["4"] - self.revs["17"] > .001:
+                mod = abs(self.revs["4"] - self.revs["17"])
+                self.wheel(speed,speed + mod * (speed / abs(speed)))
+
+            if self.revs["17"] - self.revs["4"] > .001:
+                mod = abs(self.revs["4"] - self.revs["17"])
+                self.wheel(speed,speed + mod* (speed / abs(speed)))
+
+            time.sleep(abs(speed) / 60 / 20)
+
+    def drive_curve(self, radius, angle):
+        width = 5.5
+        base_speed = 80
+
+        l_radius = radius + width / 2
+        r_radius = radius - width / 2
+
+
+
+        #find arc length
+        s = angle * l_radius
+        target_revs = s / self.wcir
+
+        self.wheel(base_speed, l_radius * r_radius * base_speed)
+
+        time.sleep(4)
+
+        self.wheel(0, 0)
+
+
+    def figure_line(self):
+        # drive in straight line of length inches
+        length = 36 
+        speed = 100
+
+        print("driving " + str(length) + " inch straight lines ")
+
+        self.drive_straight(speed,length)
+        self.drive_straight(-speed,length)
+
+
+    def calibrate(self):
+
+        mean4 = []
+        mean17 = []
+        median4 = []
+        median17 = []
+        pwm_log = []
+
+        for pwm in range(99):
+            self.rpm_log = {"4":[], "17":[]} 
+            self.h1A.ChangeDutyCycle(100 - pwm)
+            self.h3A.ChangeDutyCycle(100 - pwm)
+            time.sleep(10)
+            pwm_log.append(100-pwm)
+
+            try: 
+                mean4.append(stat.mean(self.rpm_log["4"]))
+                mean17.append( stat.mean(self.rpm_log["17"]))
+
+                median4.append(stat.median(self.rpm_log["4"]))
+                median17.append(stat.median(self.rpm_log["17"]))
+
+                
+            except:
+                mean4.append(0)
+                mean17.append(0)
+                median4.append(0)
+                median17.append(0)
+
+            self.h1A.ChangeDutyCycle(0)
+            self.h3A.ChangeDutyCycle(0)
+            time.sleep(10)
+
+
+        f = open("calibration_data.txt", "w")
+        f.write(str(median4) + "\n\n" + str(median17) + "\n\n" + str(pwm_log))
+        f.close()
+        print("calibration data written")
+
+
+
 
 
 ac = audioCar()
-ac.motor_control()
+#ac.figure_line()
+ac.drive_curve(-2,314)
 ac.exit()
-
-
-
-
-
 
 

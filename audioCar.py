@@ -22,18 +22,18 @@ class audioCar:
         self.rpm = {"4":0, "17":0}
         self.speed = {"4":0, "17":0} 
 
+        self.revs = {"4":0, "17":0} 
+
         self.max_pwm = 70
         self.min_pwm = 30
 
-        self.max_rpm = 49
-        self.min_rpm = 34
+        self.max_rpm = 120 
+        self.min_rpm = 55 
 
         self.rpm_log = {"4":[], "17":[]} 
 
-        self.k1 = 0
-        self.k2 = 1
-        self.k3 = 0
-
+        self.wdia = 2.625
+        self.wcir = 3.14159 * self.wdia
         
 
         # hbridge GPIO init
@@ -71,30 +71,28 @@ class audioCar:
             GPIO.output(self.led[pin], GPIO.LOW)
 
     def wheel(self,rpm_l,rpm_r):
-        if abs(rpm_l) > self.max_rpm or abs(rpm_r) > self.max_rpm:
-            print("request exceeds maximum rpm")
-        elif abs(rpm_l) < self.min_rpm and rpm_l != 0 or abs(rpm_r) < self.min_rpm and rpm_r != 0:
-            print("request is too slow")
-        else:
-            pwm_l = (abs(rpm_l) - 16.566) / 0.53929
-            pwm_r = (abs(rpm_r) - 21.012) / 0.39565 
+        pwm_l = (abs(rpm_l) - 39.984) / 0.84904
+        pwm_r = (abs(rpm_r) - 32.57) / 0.93539 
 
-            if pwm_l < 0: pwm_l = 0
-            if pwm_r < 0: pwm_r = 0
+        if pwm_l < 0: pwm_l = 0
+        if pwm_r < 0: pwm_r = 0
+        if pwm_l > 100: pwm_l = 100
+        if pwm_r > 100: pwm_r = 100
 
-            if rpm_l >= 0:
-                self.h1A.ChangeDutyCycle(pwm_l)
-                self.h2A.ChangeDutyCycle(0)
-            elif rpm_l <= 0:
-                self.h2A.ChangeDutyCycle(pwm_l)
-                self.h1A.ChangeDutyCycle(0)
-            if rpm_r >= 0:
-                self.h3A.ChangeDutyCycle(pwm_r)
-                self.h4A.ChangeDutyCycle(0)
-            elif rpm_r <= 0:
-                self.h4A.ChangeDutyCycle(pwm_r)
-                self.h3A.ChangeDutyCycle(0)
-            
+
+        if rpm_l >= 0:
+            self.h1A.ChangeDutyCycle(pwm_l)
+            self.h2A.ChangeDutyCycle(0)
+        elif rpm_l <= 0:
+            self.h2A.ChangeDutyCycle(pwm_l)
+            self.h1A.ChangeDutyCycle(0)
+        if rpm_r >= 0:
+            self.h3A.ChangeDutyCycle(pwm_r)
+            self.h4A.ChangeDutyCycle(0)
+        elif rpm_r <= 0:
+            self.h4A.ChangeDutyCycle(pwm_r)
+            self.h3A.ChangeDutyCycle(0)
+        
     def exit(self):
         # function to exit
         self.h1A.stop()
@@ -118,7 +116,8 @@ class audioCar:
         self.encoder_time[str(enc)] = time.time()
         self.rpm[str(enc)] = (60/(self.time_diff[str(enc)]*20))
         self.rpm_log[str(enc)].append(self.rpm[str(enc)])
-   #     print("encoder: " + str(enc) + " rpm: " + str(self.rpm[str(enc)]) + ",  " + str(self.pwm[str(enc)]))
+        self.revs[str(enc)] += 1/20
+#        print("encoder: " + str(enc) + " rpm: " + str(self.rpm[str(enc)]) + ",  " + str(self.pwm[str(enc)]) + " " + str(self.revs[str(enc)]))
 
     def feedback_stats(self):
 
@@ -135,39 +134,113 @@ class audioCar:
         print("Left(4): mean: " + str(self.lmean) + " standard deviation: " + str(self.lstd))
         print("Right(17): mean: " + str(self.rmean) + " standard deviation: " + str(self.rstd))
 
-    def rando_opto(self):
-        for i in range(100):
-            self.rpm_log = {"4":[], "17":[]} 
-            #self.k1 = random.randrange(-500,500) / 500 
-            #self.k2 = 2 * random.random() - 0.2
-            #self.k3 = random.randrange(-500,500) / 500 
-            print("k1 = " + str(self.k1) + " k2 = " + str(self.k2) + " k3 = " + str(self.k3))
-            self.motor_test()
-            self.feedback_stats()
-
-
-            text = ("k1 = " + str(self.k1) + " k2 = " + str(self.k2) + " k3 = " + str(self.k3) + " Left(4)- mean: " + str(self.lmean) + " standard deviation: " + str(self.lstd) + " Right(17)- mean: " + str(self.rmean) + " standard deviation: " + str(self.rstd) + " quality = " + str(round(1/((self.speed["4"]-self.lmean)*self.lstd) * 1000/((self.speed["17"]-self.rmean)*self.rstd),4)) + '\n')
-
-            f = open("rando_opto.txt", "a")
-            f.write(text)
-            f.close()
-
 
     def motor_test(self):
 
-        for i in range(1):
+        for i in range(5):
 
-            speed = 49 
+            speed = 120 
 
 
-            self.wheel(speed,0)
+            self.wheel(speed,speed)
 
             time.sleep(2)
-            self.wheel(0, speed)
-            time.sleep(30)
+            self.wheel(-1 * speed, -1 * speed)
+            time.sleep(2)
 
             self.wheel(0,0)
 
+    def drive_straight(self,speed,length):
+        # calculate target rev 
+        target_revs = length / self.wcir
+        # reset distance count
+        self.revs["4"] = 0
+        self.revs["17"] = 0
+        mod = 0
+
+        self.wheel(speed,speed)
+
+        while(self.revs["4"] < target_revs):
+            if self.revs["4"] - self.revs["17"] > .001:
+                mod = abs(self.revs["4"] - self.revs["17"])
+                self.wheel(speed,speed + mod * (speed / abs(speed)))
+
+            if self.revs["17"] - self.revs["4"] > .001:
+                mod = abs(self.revs["4"] - self.revs["17"])
+                self.wheel(speed,speed + mod* (speed / abs(speed)))
+
+            time.sleep(abs(speed) / 60 / 20)
+
+    def drive_curve(self, radius, angle):
+        min_rad = 7.5
+        width = 5.5
+        omega = 2 * 3.14
+
+        l_radius = radius + width / 2
+        r_radius = radius - width / 2
+
+        l_speed = l_radius*omega
+        r_speed = r_radius*omega
+        
+               #find arc length
+        sl = angle * l_radius
+        target_revsl = sl / self.wcir
+
+        sr = angle * r_radius
+        target_revsr = sr / self.wcir
+
+        # reset distance count
+        self.revs["4"] = 0
+        self.revs["17"] = 0
+ 
+        
+        if l_speed < r_speed:
+            r_speed = r_speed*self.min_rpm/l_speed
+            l_speed = l_speed*self.min_rpm/l_speed
+
+        if r_speed < l_speed:
+            l_speed = l_speed*self.min_rpm/r_speed
+            r_speed = r_speed*self.min_rpm/r_speed
+
+        print(l_speed)
+        print(r_speed)
+ 
+        self.wheel(100,100)
+        time.sleep(0.02)
+        self.wheel(l_speed,r_speed)
+        calc_theta = 0
+
+        
+        while(calc_theta < angle):
+            calc_theta = (abs(self.revs["4"] - self.revs["17"]))*self.wcir / width
+            print(calc_theta)
+        self.wheel(0, 0)
+
+
+    def figure_line(self):
+        # drive in straight line of length inches
+        length = 36 
+        speed = 100
+
+        print("driving " + str(length) + " inch straight lines ")
+
+        self.drive_straight(speed,length)
+        self.drive_straight(-speed,length)
+
+    def figure_8(self):
+        length = 36
+        speed = 100
+        for i in range(2):
+            self.drive_straight(speed,length)
+            self.wheel(120,60)
+            time.sleep(3)
+            self.wheel(0,0)
+            self.drive_straight(speed,length)
+            self.wheel(65,100)
+            time.sleep(3)
+            self.wheel(0,0)
+        #doesn't work, wheels aren't remotely consistant.
+ 
 
     def calibrate(self):
 
@@ -213,12 +286,8 @@ class audioCar:
 
 
 ac = audioCar()
-ac.calibrate()
+#ac.figure_line()
+ac.figure_8()
 ac.exit()
-
-
-
-
-
 
 
